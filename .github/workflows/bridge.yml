@@ -1,0 +1,62 @@
+name: bot1 — temporary runner-transition bridge
+run-name: bot1 · transition bridge from ${{ inputs.source_run }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_epoch:
+        description: 'Automatic Unix start time; bot1 connects 2 minutes before a runner swap'
+        type: string
+        required: true
+      source_run:
+        description: 'Automatic source workflow run ID'
+        type: string
+        required: true
+      source_job:
+        description: 'Automatic source session'
+        type: choice
+        options: ['Sothey 1/2', 'luvhi 1/2']
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: bot1-exvxeldo
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    name: bot1 transition bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Wait until the runner transition
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HANDOFF_KIND: bridge
+          HANDOFF_START_EPOCH: ${{ inputs.start_epoch }}
+          HANDOFF_SOURCE_RUN: ${{ inputs.source_run }}
+          HANDOFF_SOURCE_JOB: ${{ inputs.source_job }}
+        run: node scripts/wait-handoff.js
+      - name: Keep bot1 online across the runner swap
+        env:
+          MC_HOST: exvxeldo.de5.net
+          MC_PORT: '21734'
+          MC_USERNAME: bot1
+          MC_PASSWORD: ${{ secrets.BOT1_PASSWORD }}
+          BOT_RUN_SECONDS: '1800'
+          BOT_MIN_READY_SECONDS: '30'
+          BOT_IDLE_ACTIVITY_SECONDS: '45'
+        run: node src/main.js
+      - name: Status report
+        if: always()
+        run: if [ -f reports/status.json ]; then cat reports/status.json; fi

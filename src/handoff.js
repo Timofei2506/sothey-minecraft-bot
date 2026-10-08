@@ -9,22 +9,37 @@ function handoffPlan(startedMs, durationSeconds, overlapSeconds = 1200, warmupSe
   return { endEpoch, startEpoch: endEpoch - overlapSeconds, dispatchEpoch: endEpoch - overlapSeconds - warmupSeconds };
 }
 
+function bridgePlan(startedMs, durationSeconds) {
+  return handoffPlan(startedMs, durationSeconds, 120, 600);
+}
+
+function bridgeRunTitle(sourceRun) {
+  targetRunTitle(sourceRun);
+  return `bot1 · transition bridge from ${sourceRun}`;
+}
+
 function targetRunTitle(sourceRun) {
   if (!/^\d+$/.test(String(sourceRun))) throw new Error('Invalid source run ID');
   return `luvhi · handoff from ${sourceRun}`;
 }
 
-function sourceRunning(run, jobs) {
+function sourceRunning(run, jobs, sourceJob = 'Sothey 2/2') {
   if (run.status === 'completed') return false;
-  return jobs.some(job => job.name === 'Sothey 2/2' && job.status === 'in_progress'
-    && (job.steps || []).some(step => step.name === 'Stay connected and arrange handoff' && step.status === 'in_progress'));
+  const steps = {
+    'Sothey 1/2': 'Stay connected and arrange bridge',
+    'Sothey 2/2': 'Stay connected and arrange handoff',
+    'luvhi 1/2': 'Connect luvhi'
+  };
+  if (!steps[sourceJob]) return false;
+  return jobs.some(job => job.name === sourceJob && job.status === 'in_progress'
+    && (job.steps || []).some(step => step.name === steps[sourceJob] && step.status === 'in_progress'));
 }
 
-function validateGate(startEpoch, sourceRun, nowSeconds) {
+function validateGate(startEpoch, sourceRun, nowSeconds, overlapSeconds = 1200) {
   if (!Number.isSafeInteger(startEpoch) || startEpoch <= 0) throw new Error('Invalid start_epoch');
   targetRunTitle(sourceRun);
   if (startEpoch - nowSeconds > 3600) throw new Error('Warm-up exceeds the bounded one-hour limit');
-  if (nowSeconds >= startEpoch + 1200) throw new Error('Handoff window has already ended');
+  if (nowSeconds >= startEpoch + overlapSeconds) throw new Error('Handoff window has already ended');
 }
 
 async function githubApi(method, endpoint, body) {
@@ -42,4 +57,4 @@ async function githubApi(method, endpoint, body) {
   return response.status === 204 ? null : response.json();
 }
 
-module.exports = { handoffPlan, targetRunTitle, sourceRunning, validateGate, githubApi };
+module.exports = { handoffPlan, bridgePlan, bridgeRunTitle, targetRunTitle, sourceRunning, validateGate, githubApi };

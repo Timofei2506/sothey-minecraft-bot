@@ -1,0 +1,34 @@
+name: Check workflow handoff permissions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Dispatch a finite luvhi check with the built-in token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const { githubApi } = require('./src/handoff');
+          githubApi('POST', '/actions/workflows/luvhi.yml/dispatches', {
+            ref: process.env.GITHUB_REF_NAME || 'main',
+            inputs: { mode: 'check', start_epoch: '0', source_run: '0', expect_new: 'false' }
+          }).then(() => console.log('BUILT_IN_TOKEN_DISPATCH_ACCEPTED')).catch(error => {
+            console.error(error.message);
+            process.exitCode = 1;
+          });
+          JS

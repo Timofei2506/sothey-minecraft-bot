@@ -39,3 +39,20 @@ test('idle activity is slow and can be disabled explicitly', () => {
   assert.equal(readConfig({ MC_PASSWORD: 'test-password', BOT_IDLE_ACTIVITY_SECONDS: '0' }).idleActivitySeconds, 0);
   assert.throws(() => readConfig({ MC_PASSWORD: 'test-password', BOT_IDLE_ACTIVITY_SECONDS: '1' }));
 });
+
+test('bot1 bridge starts before a runner swap and stays independent of the next job', () => {
+  const { bridgePlan, bridgeRunTitle } = require('../src/handoff');
+  const plan = bridgePlan(1800000000000, 14400);
+  assert.equal(plan.endEpoch - plan.startEpoch, 120);
+  assert.equal(plan.startEpoch - plan.dispatchEpoch, 600);
+  assert.equal(bridgeRunTitle('123'), 'bot1 · transition bridge from 123');
+  assert.ok(600 + 1800 < 21600);
+});
+
+test('bridge gate accepts only the correct active first session', () => {
+  const jobs = [{ name: 'Sothey 1/2', status: 'in_progress', steps: [{ name: 'Stay connected and arrange bridge', status: 'in_progress' }] }];
+  assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'Sothey 1/2'), true);
+  assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'luvhi 1/2'), false);
+  assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'unrelated'), false);
+  assert.throws(() => validateGate(10000, '123', 10120, 120));
+});
