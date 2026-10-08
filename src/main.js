@@ -9,11 +9,12 @@ function runBot(config) {
   return new Promise((resolve) => {
     const started = Date.now();
     const deadline = started + config.runSeconds * 1000;
-    const stats = { attempts: 0, connections: 0, authenticatedConnections: 0, readySessions: 0, disconnects: 0 };
+    const stats = { attempts: 0, connections: 0, authenticatedConnections: 0, readySessions: 0, disconnects: 0, activityCount: 0 };
     let bot = null;
     let stopping = false;
     let ready = false;
     let authenticated = false;
+    let registeredHere = false;
     let spawned = false;
     let readySince = null;
     let readyMs = 0;
@@ -79,17 +80,17 @@ function runBot(config) {
       log('STOP', { reason, exitCode: finalCode, readySeconds: connectedSeconds(), ...stats });
       if (process.env.GITHUB_STEP_SUMMARY) {
         const summary = [
-          '## Sothey session report',
+          `## ${config.username} session report`,
           `- Result: **${finalCode === 0 ? 'PASS' : 'FAIL'}**`,
           `- Authenticated in-world time: **${connectedSeconds()} seconds**`,
           `- Successful ready sessions: ${stats.readySessions}`,
           `- Reconnects/disconnects: ${stats.disconnects}`,
           `- Stop reason: \`${reason}\``,
-          '- No gameplay, movement spam or chat spam. Authentication commands only.', ''
+          `- Idle activity packets: ${stats.activityCount} (arm animation and held-slot selection; no attacks or chat).`, ''
         ].join('\n');
         fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
       }
-      try { bot?.quit('Sothey session finished'); } catch { /* socket already closed */ }
+      try { bot?.quit(`${config.username} session finished`); } catch { /* socket already closed */ }
       setTimeout(() => {
         try { bot?._client?.socket?.destroy(); } catch { /* already closed */ }
         process.off('SIGTERM', onTerm);
@@ -166,6 +167,10 @@ function runBot(config) {
         // Do not publish other players' chat to a public Actions log.
         const action = authAction(message);
         if (action) {
+          if (action === 'login' && config.expectNewAccount && !registeredHere && !authSent.has('register')) {
+            finish('username_already_registered_password_required', 1);
+            return;
+          }
           if (authenticated) endReadyPeriod();
           authenticated = false;
           clearTimeout(settleTimer);
@@ -177,6 +182,7 @@ function runBot(config) {
             : `/login ${config.password}`;
           current.chat(command);
         } else if (authSucceeded(message)) {
+          if (authSent.has('register')) registeredHere = true;
           if (!authenticated) stats.authenticatedConnections++;
           authenticated = true;
           log('AUTHENTICATED');
@@ -240,7 +246,20 @@ function runBot(config) {
         finish('server_unreachable_too_long', 1);
       }
     }, 5000));
-    log('START', { seconds: config.runSeconds, minReadySeconds: config.minReadySeconds, auth: 'offline + server password' });
+    if (config.idleActivitySeconds > 0) {
+      timers.add(setInterval(() => {
+        if (stopping || !ready || !authenticated || !bot || bot.health <= 0) return;
+        try {
+          bot.swingArm('right');
+          bot.setQuickBarSlot(bot.quickBarSlot === 8 ? 7 : 8);
+          stats.activityCount++;
+          log('IDLE_ACTIVITY', { action: 'arm_animation_and_slot_change', count: stats.activityCount });
+        } catch (error) {
+          log('IDLE_ACTIVITY_ERROR', { message: error.message });
+        }
+      }, config.idleActivitySeconds * 1000));
+    }
+    log('START', { seconds: config.runSeconds, idleActivitySeconds: config.idleActivitySeconds, minReadySeconds: config.minReadySeconds, auth: 'offline + server password' });
     writeReport();
     connect();
   });

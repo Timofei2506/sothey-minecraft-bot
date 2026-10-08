@@ -16,6 +16,8 @@ function readConfig(env = process.env) {
     throw new Error('Set MC_PASSWORD to the bot account password (8–64 characters, no spaces). Never put it in the repository.');
   }
   const runSeconds = integer(env, 'BOT_RUN_SECONDS', 14400, 60, 86400);
+  const idleActivitySeconds = integer(env, 'BOT_IDLE_ACTIVITY_SECONDS', 45, 0, 300);
+  if (idleActivitySeconds > 0 && idleActivitySeconds < 15) throw new Error('Activity interval must be 0 or at least 15 seconds');
   return {
     host: env.MC_HOST || 'exvxeldo.de5.net',
     port: integer(env, 'MC_PORT', 21734, 1, 65535),
@@ -23,6 +25,8 @@ function readConfig(env = process.env) {
     version: '1.12.2',
     password,
     runSeconds,
+    idleActivitySeconds,
+    expectNewAccount: env.BOT_EXPECT_NEW_ACCOUNT === 'true',
     minReadySeconds: integer(env, 'BOT_MIN_READY_SECONDS', 30, 1, runSeconds),
     joinTimeoutSeconds: integer(env, 'BOT_JOIN_TIMEOUT_SECONDS', 180, 30, 600),
     maxOfflineSeconds: integer(env, 'BOT_MAX_OFFLINE_SECONDS', 900, 60, 3600)

@@ -36,6 +36,7 @@ jobs:
       MC_HOST: exvxeldo.de5.net
       MC_PORT: '21734'
       MC_USERNAME: Sothey
+      BOT_IDLE_ACTIVITY_SECONDS: '45'
       BOT_RUN_SECONDS: ${{ inputs.mode == 'check' && '120' || '14400' }}
       BOT_MIN_READY_SECONDS: ${{ inputs.mode == 'check' && '60' || '30' }}
       BOT_JOIN_TIMEOUT_SECONDS: '180'
