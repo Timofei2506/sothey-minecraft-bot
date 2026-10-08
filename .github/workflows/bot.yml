@@ -1,0 +1,65 @@
+name: Sothey — manual session
+run-name: Sothey · ${{ inputs.mode == 'check' && '2-minute connection check' || '8-hour night' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check = 2 minutes; night = two consecutive 4-hour sessions'
+        type: choice
+        required: true
+        default: night
+        options:
+          - check
+          - night
+
+permissions:
+  contents: read
+
+# Never connect two Sothey clients at once. Stop a running session before starting
+# another one; Cancel workflow also cancels any remaining matrix session.
+concurrency:
+  group: sothey-exvxeldo
+  cancel-in-progress: false
+
+jobs:
+  session:
+    name: Session ${{ matrix.part }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        part: ${{ fromJSON(inputs.mode == 'check' && '[1]' || '[1,2]') }}
+    env:
+      MC_HOST: exvxeldo.de5.net
+      MC_PORT: '21734'
+      MC_USERNAME: Sothey
+      BOT_RUN_SECONDS: ${{ inputs.mode == 'check' && '120' || '14400' }}
+      BOT_MIN_READY_SECONDS: ${{ inputs.mode == 'check' && '60' || '30' }}
+      BOT_JOIN_TIMEOUT_SECONDS: '180'
+      BOT_MAX_OFFLINE_SECONDS: '900'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Check code
+        run: npm run check && npm test
+      - name: Connect, authenticate and stay online
+        env:
+          MC_PASSWORD: ${{ secrets.MC_PASSWORD }}
+        run: node src/main.js
+      - name: Publish password-free status report
+        if: always()
+        run: |
+          if [ -f reports/status.json ]; then
+            cat reports/status.json
+          else
+            echo 'Bot did not start; inspect the failed step above.'
+          fi

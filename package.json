@@ -1,0 +1,21 @@
+{
+  "name": "sothey-minecraft-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A single reconnecting Minecraft Java 1.12.2 client named Sothey.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/main.js && node --check src/helpers.js"
+  },
+  "dependencies": {
+    "mineflayer": "4.39.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  }
+}
