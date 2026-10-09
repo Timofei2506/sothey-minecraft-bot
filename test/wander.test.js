@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { distance2D, radiusFor, pickTarget, yawTowards, isGoldOre, createWanderer } = require('../src/wander');
+const { distance2D, radiusFor, pickTarget, yawTowards, homingTarget, isGoldOre, createWanderer } = require('../src/wander');
 
 function block(name) {
   return { name, boundingBox: name === 'air' ? 'empty' : 'block' };
@@ -35,6 +35,7 @@ function harness(options = {}) {
     anchor: options.anchor ?? null,
     random: options.random || (() => 0),
     log: (event, data = {}) => events.push({ event, ...data }),
+    radius: options.radius ?? 5,
     pauseMs: options.pauseMs ?? 0,
     jumpEveryLegs: options.jumpEveryLegs ?? 3,
     jumpDelayMs: options.jumpDelayMs ?? 0,
@@ -51,9 +52,11 @@ function endLeg(h, at) {
 }
 
 test('the radius is 2 over gold ore and 5 over any other block', () => {
-  assert.equal(radiusFor(makeBot({ ground: 'gold_ore' }), { x: 0.5, y: 64, z: 0.5 }).radius, 2);
-  assert.equal(radiusFor(makeBot({ ground: 'stone' }), { x: 0.5, y: 64, z: 0.5 }).radius, 5);
-  assert.equal(radiusFor(makeBot({ ground: 'grass' }), { x: 0.5, y: 64, z: 0.5 }).radius, 5);
+  const at = { x: 0.5, y: 64, z: 0.5 };
+  assert.equal(radiusFor(makeBot({ ground: 'gold_ore' }), at, 5, false).radius, 2);
+  assert.equal(radiusFor(makeBot({ ground: 'stone' }), at, 5, false).radius, 5);
+  assert.equal(radiusFor(makeBot({ ground: 'grass' }), at, 5, false).radius, 5);
+  assert.equal(radiusFor(makeBot({ ground: 'gold_ore' }), at, 5, true).radius, 5, 'pinned wins');
   assert.equal(isGoldOre({ name: 'gold_ore' }), true);
   assert.equal(isGoldOre({ name: 'nether_gold_ore' }), true);
   assert.equal(isGoldOre({ name: 'stone' }), false);
@@ -187,6 +190,57 @@ test('an admin teleport re-anchors and re-reads the radius from the new block', 
   assert.equal(h.last('WANDER_REANCHORED').jump, 126.49);
   assert.deepEqual(h.wanderer.getAnchor(), { x: 120.5, y: 64, z: 40.5 });
   assert.equal(h.wanderer.getRadius(), 5);
+});
+
+test('a pinned anchor is never moved by teleports and keeps the configured radius', () => {
+  const bot = makeBot({ ground: 'gold_ore' });
+  const h = harness({ bot, anchor: { x: 1, y: 50, z: -1 }, radius: 5, random: () => 0 });
+  h.wanderer.tick();
+  assert.equal(h.wanderer.getRadius(), 5, 'gold ore does not shrink an explicit radius');
+  assert.deepEqual(h.wanderer.getAnchor(), { x: 1, y: 50, z: -1 });
+  h.wanderer.monitor();
+  bot.moveTo(120.5, 64, 40.5);
+  h.wanderer.monitor();
+  assert.equal(h.last('WANDER_TELEPORTED').jump, 126.49);
+  assert.equal(h.last('WANDER_REANCHORED'), undefined);
+  assert.deepEqual(h.wanderer.getAnchor(), { x: 1, y: 50, z: -1 });
+});
+
+test('outside the radius the bot walks back towards the anchor', () => {
+  const bot = makeBot();
+  const h = harness({ bot, anchor: { x: 0.5, y: 64, z: 0.5 }, radius: 5, random: () => 0 });
+  bot.moveTo(30.5, 64, 0.5);
+  h.wanderer.monitor();
+  h.wanderer.tick();
+  const start = h.last('WANDER_LEG_START');
+  assert.equal(start.homing, true);
+  assert.ok(start.target.x < 30.5, 'target is back towards the anchor');
+  assert.ok(Math.abs(start.target.x - 27.5) < 0.01);
+  // A homing leg is not killed by the normal radius guard.
+  h.wanderer.monitor();
+  assert.equal(h.last('WANDER_STOPPED'), undefined);
+  assert.equal(bot.state.controls.forward, true);
+});
+
+test('homing gives up only when the anchor is absurdly far away', () => {
+  const bot = makeBot();
+  const h = harness({ bot, anchor: { x: 0.5, y: 64, z: 0.5 }, radius: 5, maxHomingBlocks: 100, random: () => 0 });
+  bot.moveTo(500.5, 64, 0.5);
+  h.wanderer.monitor();
+  h.wanderer.tick();
+  h.wanderer.monitor();
+  assert.equal(h.last('WANDER_STOPPED').reason, 'too_far_to_return');
+  assert.equal(bot.state.controls.forward, false);
+});
+
+test('homingTarget never overshoots the anchor', () => {
+  const anchor = { x: 0.5, y: 64, z: 0.5 };
+  for (const x of [10, 40, 3]) {
+    const target = homingTarget(anchor, 5, { x, z: 0.5 });
+    assert.ok(Math.abs(target.x - anchor.x) < Math.abs(x - anchor.x));
+    assert.ok(Math.abs(target.x - anchor.x) >= 0);
+  }
+  assert.deepEqual(homingTarget(anchor, 5, { x: 0.5, z: 0.5 }), { x: 0.5, z: 0.5 });
 });
 
 test('a death stops walking until the bot is moved again', () => {

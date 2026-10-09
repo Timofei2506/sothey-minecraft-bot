@@ -26,10 +26,21 @@ function blockUnder(bot, x, y, z) {
   return bot.blockAt(Math.floor(x), Math.floor(y) - 1, Math.floor(z));
 }
 
-function radiusFor(bot, position) {
+function radiusFor(bot, position, configuredRadius, pinned) {
+  // An explicitly pinned anchor means the owner chose both the point and the radius.
+  if (pinned) return { radius: configuredRadius, goldOre: false, block: null, pinned: true };
   const block = blockUnder(bot, position.x, position.y, position.z);
   const goldOre = isGoldOre(block);
-  return { radius: goldOre ? GOLD_ORE_RADIUS : DEFAULT_RADIUS, goldOre, block: block ? block.name : null };
+  return { radius: goldOre ? GOLD_ORE_RADIUS : configuredRadius, goldOre, block: block ? block.name : null, pinned: false };
+}
+
+// Walk back towards the anchor instead of giving up when the bot ends up outside.
+function homingTarget(anchor, radius, position) {
+  const dx = anchor.x - position.x;
+  const dz = anchor.z - position.z;
+  const distance = Math.hypot(dx, dz) || 1;
+  const step = Math.min(distance, Math.max(2, radius * 0.6));
+  return { x: position.x + (dx / distance) * step, z: position.z + (dz / distance) * step };
 }
 
 // A target that is too close makes the leg finish instantly, so the bot would
@@ -52,12 +63,14 @@ function yawTowards(from, to) {
 }
 
 function createWanderer({
-  getBot, anchor: initialAnchor = null, random = Math.random, log = () => {},
+  getBot, anchor: initialAnchor = null, radius: configuredRadius = DEFAULT_RADIUS,
+  random = Math.random, log = () => {},
   pauseMs = 1000, maxLegMs = 4000, jumpEveryLegs = 3, jumpDelayMs = 800, jumpHoldMs = 300,
-  teleportReanchorBlocks = 8, now = () => Date.now()
+  teleportReanchorBlocks = 8, maxHomingBlocks = 200, now = () => Date.now()
 }) {
+  const pinned = initialAnchor !== null;
   let anchor = initialAnchor;
-  let radius = null;
+  let radius = pinned ? configuredRadius : null;
   let disabled = false;
   let leg = null;
   let lastPosition = null;
@@ -81,12 +94,19 @@ function createWanderer({
   }
 
   function setAnchorFrom(position, reason) {
+    if (pinned) {
+      radius = configuredRadius;
+      disabled = false;
+      log('WANDER_ANCHOR', { x: anchor.x, y: anchor.y, z: anchor.z, reason, pinned: true });
+      log('WANDER_RADIUS', { radius, pinned: true });
+      return;
+    }
     anchor = { x: Math.floor(position.x) + 0.5, y: Math.floor(position.y), z: Math.floor(position.z) + 0.5 };
-    const chosen = radiusFor(getBot(), position);
+    const chosen = radiusFor(getBot(), position, configuredRadius, pinned);
     radius = chosen.radius;
     disabled = false;
-    log('WANDER_ANCHOR', { x: anchor.x, y: anchor.y, z: anchor.z, reason });
-    log('WANDER_RADIUS', { radius, goldOre: chosen.goldOre, block: chosen.block });
+    log('WANDER_ANCHOR', { x: anchor.x, y: anchor.y, z: anchor.z, reason, pinned: false });
+    log('WANDER_RADIUS', { radius, goldOre: chosen.goldOre, block: chosen.block, pinned: false });
   }
 
   function tick() {
@@ -96,10 +116,12 @@ function createWanderer({
     if (!anchor) setAnchorFrom(position, 'spawn');
     if (leg || now() < pauseUntil) return;
     if (!bot.entity.onGround) return;
-    const target = pickTarget(anchor, radius, position, random);
+    const away = distance2D(position, anchor);
+    const homing = away > radius;
+    const target = homing ? homingTarget(anchor, radius, position) : pickTarget(anchor, radius, position, random);
     legIndex++;
     leg = {
-      target, index: legIndex, endsAt: now() + maxLegMs, start: { x: position.x, z: position.z },
+      target, homing, index: legIndex, endsAt: now() + maxLegMs, start: { x: position.x, z: position.z },
       jumpState: jumpEveryLegs > 0 && legIndex % jumpEveryLegs === 0 ? 'pending' : 'none',
       jumpAt: now() + jumpDelayMs, jumpUntil: 0
     };
@@ -108,7 +130,7 @@ function createWanderer({
       const looking = bot.look(yawTowards(position, target), 0, true);
       if (looking && typeof looking.catch === 'function') looking.catch(() => {/* best effort */});
       bot.setControlState('forward', true);
-      log('WANDER_LEG_START', { leg: legIndex, target: { x: round(target.x), z: round(target.z) }, radius, jump: leg.jumpState === 'pending' });
+      log('WANDER_LEG_START', { leg: legIndex, target: { x: round(target.x), z: round(target.z) }, radius, homing, jump: leg.jumpState === 'pending' });
     } catch (error) {
       release();
       log('WANDER_ERROR', { message: error.message });
@@ -124,9 +146,14 @@ function createWanderer({
       const jump = distance2D(position, lastPosition);
       if (jump > teleportReanchorBlocks) {
         release();
-        setAnchorFrom(position, 'teleport');
-        stats.reanchors++;
-        log('WANDER_REANCHORED', { jump: round(jump) });
+        if (pinned) {
+          // The owner pinned this point, so the bot walks back instead of re-anchoring.
+          log('WANDER_TELEPORTED', { jump: round(jump), pinned: true });
+        } else {
+          setAnchorFrom(position, 'teleport');
+          stats.reanchors++;
+          log('WANDER_REANCHORED', { jump: round(jump) });
+        }
       }
     }
     lastPosition = { x: position.x, y: position.y, z: position.z };
@@ -143,12 +170,18 @@ function createWanderer({
       leg.jumpState = 'done';
     }
 
-    if (distance2D(position, anchor) > radius + 1.5) {
-      const distance = round(distance2D(position, anchor));
+    const away = distance2D(position, anchor);
+    // A homing leg is allowed to start outside the radius; that is how it returns.
+    if (!leg.homing && away > radius + 1.5) {
       release();
       note('out_of_range');
-      log('WANDER_STOPPED', { reason: 'out_of_range', distance, radius, legs: stats.legs });
-      if (distance > teleportReanchorBlocks) setAnchorFrom(position, 'moved');
+      log('WANDER_STOPPED', { reason: 'out_of_range', distance: round(away), radius, legs: stats.legs });
+      return;
+    }
+    if (leg.homing && away > maxHomingBlocks) {
+      release();
+      note('too_far_to_return');
+      log('WANDER_STOPPED', { reason: 'too_far_to_return', distance: round(away), radius });
       return;
     }
 
@@ -181,4 +214,4 @@ function createWanderer({
   };
 }
 
-module.exports = { GOLD_ORE_RADIUS, DEFAULT_RADIUS, distance2D, blockUnder, isGoldOre, radiusFor, pickTarget, yawTowards, createWanderer };
+module.exports = { GOLD_ORE_RADIUS, DEFAULT_RADIUS, distance2D, blockUnder, isGoldOre, radiusFor, homingTarget, pickTarget, yawTowards, createWanderer };

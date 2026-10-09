@@ -40,7 +40,7 @@ function runBot(config, deps = {}) {
     const timers = new Set();
     const wanderer = config.wanderRadiusBlocks > 0
       ? createWanderer({
-        getBot: () => bot, anchor: config.wanderAnchor, log,
+        getBot: () => bot, anchor: config.wanderAnchor, radius: config.wanderRadiusBlocks, log,
         pauseMs: config.wanderPauseSeconds * 1000,
         jumpEveryLegs: config.wanderJumpEveryLegs
       })
