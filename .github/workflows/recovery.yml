@@ -1,11 +1,11 @@
-name: Resume luvhi until the original deadline
+name: Resume luvhi until a chosen deadline
 run-name: luvhi · recovery until ${{ inputs.end_epoch }}
 
 on:
   workflow_dispatch:
     inputs:
       end_epoch:
-        description: 'Original absolute Unix deadline; do not extend the previous window'
+        description: 'Absolute Unix deadline. Max 12h ahead; GitHub still caps one job at 6h, so it is split into up to three sessions.'
         type: string
         required: true
 
@@ -21,26 +21,48 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      first_end: ${{ steps.plan.outputs.first_end }}
-      has_second: ${{ steps.plan.outputs.has_second }}
+      end1: ${{ steps.plan.outputs.end1 }}
+      end2: ${{ steps.plan.outputs.end2 }}
+      end3: ${{ steps.plan.outputs.end3 }}
+      has2: ${{ steps.plan.outputs.has2 }}
+      has3: ${{ steps.plan.outputs.has3 }}
     steps:
-      - name: Validate and split the remaining window
+      - name: Validate the deadline and split it into legal jobs
         id: plan
         env:
           END_EPOCH: ${{ inputs.end_epoch }}
         run: |
           node - <<'JS'
           const fs = require('node:fs');
-          const now = Math.floor(Date.now()/1000);
+          const now = Math.floor(Date.now() / 1000);
           const end = Number(process.env.END_EPOCH);
-          if (!Number.isSafeInteger(end) || end-now < 120 || end-now > 28800) throw new Error('Deadline must be between 2 minutes and 8 hours from now');
-          const first = Math.min(end, now+14400);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `first_end=${first}\nhas_second=${end>first}\n`);
-          console.log(JSON.stringify({originalEnd:new Date(end*1000).toISOString(),firstEnd:new Date(first*1000).toISOString(),remainingSeconds:end-now}));
+          const remaining = end - now;
+          // 2 minutes minimum, 12 hours maximum, and never more than three 4h jobs.
+          if (!Number.isSafeInteger(end) || remaining < 120 || remaining > 43200) {
+            throw new Error('Deadline must be between 2 minutes and 12 hours from now');
+          }
+          const first = Math.min(14400, remaining);
+          const second = Math.min(14400, remaining - first);
+          const third = remaining - first - second;
+          const out = {
+            end1: now + first,
+            end2: second > 0 ? now + first + second : 0,
+            end3: third > 0 ? end : 0,
+            has2: second > 0,
+            has3: third > 0
+          };
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            `end1=${out.end1}\nend2=${out.end2}\nend3=${out.end3}\nhas2=${out.has2}\nhas3=${out.has3}\n`);
+          console.log(JSON.stringify({
+            now: new Date(now * 1000).toISOString(),
+            end: new Date(end * 1000).toISOString(),
+            remainingSeconds: remaining,
+            jobs: [out.end1, out.end2, out.end3].filter(Boolean).map(e => new Date(e * 1000).toISOString())
+          }));
           JS
 
   first:
-    name: luvhi 1/2
+    name: luvhi 1/3
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 250
@@ -51,10 +73,10 @@ jobs:
     outputs:
       can_continue: ${{ steps.report.outputs.can_continue }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-fund --no-audit
@@ -63,12 +85,12 @@ jobs:
         env:
           MC_USERNAME: luvhi
           MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
-          BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.first_end }}
+          BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.end1 }}
           BOT_IDLE_ACTIVITY_SECONDS: '45'
           WANDER_RADIUS_BLOCKS: '5'
           BOT_GITHUB_STATUS: 'true'
-          BRIDGE_ENABLED: ${{ needs.plan.outputs.has_second }}
-          SOURCE_JOB_NAME: 'luvhi 1/2'
+          BRIDGE_ENABLED: ${{ needs.plan.outputs.has2 }}
+          SOURCE_JOB_NAME: 'luvhi 1/3'
           GH_TOKEN: ${{ github.token }}
         run: node scripts/session.js
       - name: Publish result
@@ -77,19 +99,22 @@ jobs:
         run: node scripts/publish-status.js
 
   second:
-    name: luvhi 2/2
+    name: luvhi 2/3
     needs: [plan, first]
-    if: always() && !cancelled() && needs.plan.outputs.has_second == 'true' && needs.first.outputs.can_continue == 'true'
+    if: always() && !cancelled() && needs.plan.outputs.has2 == 'true' && needs.first.outputs.can_continue == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 250
     permissions:
       contents: read
+      actions: write
       statuses: write
+    outputs:
+      can_continue: ${{ steps.report.outputs.can_continue }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-fund --no-audit
@@ -97,7 +122,41 @@ jobs:
         env:
           MC_USERNAME: luvhi
           MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
-          BOT_DEADLINE_EPOCH: ${{ inputs.end_epoch }}
+          BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.end2 }}
+          BOT_IDLE_ACTIVITY_SECONDS: '45'
+          WANDER_RADIUS_BLOCKS: '5'
+          BOT_GITHUB_STATUS: 'true'
+          BRIDGE_ENABLED: ${{ needs.plan.outputs.has3 }}
+          SOURCE_JOB_NAME: 'luvhi 2/3'
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/session.js
+      - name: Publish result
+        id: report
+        if: always()
+        run: node scripts/publish-status.js
+
+  third:
+    name: luvhi 3/3
+    needs: [plan, second]
+    if: always() && !cancelled() && needs.plan.outputs.has3 == 'true' && needs.second.outputs.can_continue == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Connect luvhi
+        env:
+          MC_USERNAME: luvhi
+          MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
+          BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.end3 }}
           BOT_IDLE_ACTIVITY_SECONDS: '45'
           WANDER_RADIUS_BLOCKS: '5'
           BOT_GITHUB_STATUS: 'true'

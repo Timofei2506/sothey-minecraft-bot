@@ -5,6 +5,32 @@ const { runBot } = require('../src/main');
 const { handoffPlan, bridgePlan, targetRunTitle, bridgeRunTitle, githubApi } = require('../src/handoff');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+const WANDER_EVENTS = new Set([
+  'WANDER_ANCHOR', 'WANDER_RADIUS', 'WANDER_AREA_UNSAFE', 'WANDER_DISABLED_UNSAFE_AREA',
+  'WANDER_DISABLED_OUT_OF_RANGE', 'WANDER_DISABLED', 'WANDER_REANCHORED',
+  'WANDER_LEG_START', 'WANDER_LEG_END', 'WANDER_STOPPED',
+  'WANDER_SKIPPED_PLAYER_NEARBY', 'WANDER_SKIPPED_UNSAFE_TARGET'
+]);
+
+function wanderEvent(name) {
+  return WANDER_EVENTS.has(name);
+}
+
+function wanderDescription(event) {
+  if (event.event === 'WANDER_RADIUS') return `wander radius ${event.effective} blocks (configured ${event.configured}, gold ore under spawn: ${event.goldOre})`;
+  if (event.event === 'WANDER_ANCHOR') return `wander anchor x=${event.x} y=${event.y} z=${event.z}`;
+  if (event.event === 'WANDER_DISABLED_UNSAFE_AREA') return `walking off: unsafe ground near x=${event.point?.x} z=${event.point?.z} (radius ${event.configuredRadius})`;
+  if (event.event === 'WANDER_DISABLED_OUT_OF_RANGE') return `walking off: ${event.distance} blocks from anchor (radius ${event.radius})`;
+  if (event.event === 'WANDER_AREA_UNSAFE') return `area unsafe near x=${event.point?.x} z=${event.point?.z}`;
+  if (event.event === 'WANDER_LEG_END') return `walked ${event.moved} blocks`;
+  if (event.event === 'WANDER_STOPPED') return `walk stopped: ${event.reason}`;
+  if (event.event === 'WANDER_REANCHORED') return `anchor moved by admin teleport (${event.jump} blocks)`;
+  if (event.event === 'WANDER_SKIPPED_PLAYER_NEARBY') return 'walk skipped: player within 2 blocks';
+  if (event.event === 'WANDER_SKIPPED_UNSAFE_TARGET') return `walk skipped: unsafe target x=${event.x} z=${event.z}`;
+  if (event.event === 'WANDER_DISABLED') return `walking disabled: ${event.reason}`;
+  return event.event;
+}
+
 async function main() {
   const config = readConfig();
   const handoff = process.env.HANDOFF_ENABLED === 'true';
@@ -27,7 +53,7 @@ async function main() {
     const inputs = bridge
       ? { start_epoch: String(plan.startEpoch), source_run: String(sourceRun), source_job: process.env.SOURCE_JOB_NAME }
       : { mode: 'handoff', start_epoch: String(plan.startEpoch), source_run: String(sourceRun), expect_new: 'false' };
-    if (bridge && !['Sothey 1/2', 'luvhi 1/2'].includes(inputs.source_job)) throw new Error('Invalid bridge source job');
+    if (bridge && !['Sothey 1/2', 'luvhi 1/2', 'luvhi 1/3', 'luvhi 2/3'].includes(inputs.source_job)) throw new Error('Invalid bridge source job');
     console.log(JSON.stringify({ event: `${kind}_PLAN`, username: target, ...plan, sourceRun }));
     fs.mkdirSync('reports', { recursive: true });
     fs.writeFileSync(`reports/${kind.toLowerCase()}.json`, JSON.stringify({ ...plan, sourceRun, title }, null, 2));
@@ -68,7 +94,17 @@ async function main() {
   const beacon = process.env.BOT_GITHUB_STATUS === 'true';
   const code = await runBot(config, {
     onEvent: event => {
-      if (!beacon || !['START', 'READY', 'DISCONNECTED', 'CONNECTION_RETRY', 'STOP'].includes(event.event)) return;
+      if (!beacon) return;
+      if (wanderEvent(event.event)) {
+        const wanderContext = `minecraft/${config.username}-wander`;
+        const state = /DISABLED|STOPPED|UNSAFE/.test(event.event) ? 'failure' : /LEG_END|REANCHORED|RADIUS/.test(event.event) ? 'success' : 'pending';
+        statusQueue = statusQueue.then(() => githubApi('POST', `/statuses/${process.env.GITHUB_SHA}`, {
+          state, context: wanderContext, description: wanderDescription(event).slice(0, 140),
+          target_url: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+        })).catch(error => console.error(JSON.stringify({ event: 'STATUS_BEACON_ERROR', message: error.message })));
+        return;
+      }
+      if (!['START', 'READY', 'DISCONNECTED', 'CONNECTION_RETRY', 'STOP'].includes(event.event)) return;
       const state = event.event === 'READY' ? 'success' : event.event === 'STOP' ? (event.exitCode === 0 ? 'success' : 'failure') : 'pending';
       const description = event.event === 'READY' ? `${config.username}: authenticated and ready` : event.event === 'STOP' ? `${config.username}: session finished (${event.reason})` : `${config.username}: connecting / not verified`;
       statusQueue = statusQueue.then(() => githubApi('POST', `/statuses/${process.env.GITHUB_SHA}`, {

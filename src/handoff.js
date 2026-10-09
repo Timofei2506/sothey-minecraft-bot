@@ -28,7 +28,9 @@ function sourceRunning(run, jobs, sourceJob = 'Sothey 2/2') {
   const steps = {
     'Sothey 1/2': 'Stay connected and arrange bridge',
     'Sothey 2/2': 'Stay connected and arrange handoff',
-    'luvhi 1/2': 'Connect luvhi'
+    'luvhi 1/2': 'Connect luvhi',
+    'luvhi 1/3': 'Connect luvhi',
+    'luvhi 2/3': 'Connect luvhi'
   };
   if (!steps[sourceJob]) return false;
   return jobs.some(job => job.name === sourceJob && job.status === 'in_progress'

@@ -54,5 +54,8 @@ test('bridge gate accepts only the correct active first session', () => {
   assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'Sothey 1/2'), true);
   assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'luvhi 1/2'), false);
   assert.equal(sourceRunning({ status: 'in_progress' }, jobs, 'unrelated'), false);
+  const recovery = [{ name: 'luvhi 1/3', status: 'in_progress', steps: [{ name: 'Connect luvhi', status: 'in_progress' }] }];
+  assert.equal(sourceRunning({ status: 'in_progress' }, recovery, 'luvhi 1/3'), true);
+  assert.equal(sourceRunning({ status: 'in_progress' }, recovery, 'luvhi 2/3'), false);
   assert.throws(() => validateGate(10000, '123', 10120, 120));
 });
