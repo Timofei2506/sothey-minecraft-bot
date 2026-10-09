@@ -17,7 +17,8 @@ async function main() {
   let timer = null;
   if (enabled) {
     if (handoff && config.username !== 'Sothey') throw new Error('Only Sothey initiates the one-off luvhi handoff');
-    const plan = bridge ? bridgePlan(Date.now(), config.runSeconds) : handoffPlan(Date.now(), config.runSeconds);
+    const planStart = config.deadlineEpoch ? (config.deadlineEpoch - config.runSeconds) * 1000 : Date.now();
+    const plan = bridge ? bridgePlan(planStart, config.runSeconds) : handoffPlan(planStart, config.runSeconds);
     const sourceRun = process.env.GITHUB_RUN_ID;
     const title = bridge ? bridgeRunTitle(sourceRun) : targetRunTitle(sourceRun);
     const target = bridge ? 'bot1' : 'luvhi';
@@ -63,7 +64,20 @@ async function main() {
     }
     timer = setTimeout(() => { dispatchTask = dispatch(); }, Math.max(0, plan.dispatchEpoch * 1000 - Date.now()));
   }
-  const code = await runBot(config);
+  let statusQueue = Promise.resolve();
+  const beacon = process.env.BOT_GITHUB_STATUS === 'true';
+  const code = await runBot(config, {
+    onEvent: event => {
+      if (!beacon || !['START', 'READY', 'DISCONNECTED', 'CONNECTION_RETRY', 'STOP'].includes(event.event)) return;
+      const state = event.event === 'READY' ? 'success' : event.event === 'STOP' ? (event.exitCode === 0 ? 'success' : 'failure') : 'pending';
+      const description = event.event === 'READY' ? `${config.username}: authenticated and ready` : event.event === 'STOP' ? `${config.username}: session finished (${event.reason})` : `${config.username}: connecting / not verified`;
+      statusQueue = statusQueue.then(() => githubApi('POST', `/statuses/${process.env.GITHUB_SHA}`, {
+        state, context: `minecraft/${config.username}`, description: description.slice(0, 140),
+        target_url: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      })).catch(error => console.error(JSON.stringify({ event: 'STATUS_BEACON_ERROR', message: error.message })));
+    }
+  });
+  await statusQueue;
   finished = true;
   clearTimeout(timer);
   if (dispatchTask) await dispatchTask;

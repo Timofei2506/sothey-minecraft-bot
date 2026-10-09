@@ -15,7 +15,9 @@ function readConfig(env = process.env) {
   if (!/^[^\s\x00-\x1f\x7f]{8,64}$/.test(password)) {
     throw new Error('Set MC_PASSWORD to the bot account password (8–64 characters, no spaces). Never put it in the repository.');
   }
-  const runSeconds = integer(env, 'BOT_RUN_SECONDS', 14400, 60, 86400);
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const deadlineEpoch = env.BOT_DEADLINE_EPOCH ? integer(env, 'BOT_DEADLINE_EPOCH', 0, nowEpoch + 60, nowEpoch + 86400) : null;
+  const runSeconds = deadlineEpoch ? deadlineEpoch - nowEpoch : integer(env, 'BOT_RUN_SECONDS', 14400, 60, 86400);
   const idleActivitySeconds = integer(env, 'BOT_IDLE_ACTIVITY_SECONDS', 45, 0, 300);
   if (idleActivitySeconds > 0 && idleActivitySeconds < 15) throw new Error('Activity interval must be 0 or at least 15 seconds');
   return {
@@ -25,6 +27,10 @@ function readConfig(env = process.env) {
     version: '1.12.2',
     password,
     runSeconds,
+    deadlineEpoch,
+    authProbeDelaySeconds: integer(env, 'BOT_AUTH_PROBE_DELAY_SECONDS', 12, 5, 60),
+    authProbeRepeatSeconds: integer(env, 'BOT_AUTH_PROBE_REPEAT_SECONDS', 30, 15, 120),
+    authDiagnostics: env.BOT_AUTH_DIAGNOSTICS === 'true',
     idleActivitySeconds,
     expectNewAccount: env.BOT_EXPECT_NEW_ACCOUNT === 'true',
     minReadySeconds: integer(env, 'BOT_MIN_READY_SECONDS', 30, 1, runSeconds),
@@ -35,7 +41,7 @@ function readConfig(env = process.env) {
 
 function plainText(value) {
   if (typeof value === 'string') {
-    if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
+    if (['{', '[', '"'].includes(value.trim()[0])) {
       try { return plainText(JSON.parse(value)); } catch { /* ordinary text */ }
     }
     return value.replace(/§[0-9a-fk-or]/gi, '').replace(/\x1b\[[0-9;]*m/g, '').trim();
@@ -62,11 +68,18 @@ function authAction(message) {
 }
 
 function authSucceeded(message) {
-  return /^(?:successfully registered|successful login|login successful|registration successful|you have (?:been )?(?:successfully |automatically )?(?:logged in|registered)|вы (?:были )?(?:успешно |автоматически )?(?:зарегистрировались|зарегистрированы|вошли|авторизовались)|успешная (?:авторизация|регистрация)|вы успешно прошли авторизацию)(?:[!.\s]|$)/i.test(authNotice(message));
+  return /^(?:successfully registered|successful login|login successful|registration successful|(?:you are |you['’]re )?already logged in|you have (?:been )?(?:successfully |automatically )?(?:logged in|registered)|вы (?:были )?(?:успешно |автоматически )?(?:зарегистрировались|зарегистрированы|вошли|авторизовались)|успешная (?:авторизация|регистрация)|вы успешно прошли авторизацию|вы уже (?:авторизованы|авторизовались|вошли(?: в систему)?))(?:[!.\s]|$)/i.test(authNotice(message));
 }
 
 function authFailed(message) {
   return /^(?:wrong password|incorrect password|invalid password|неверный пароль|неправильный пароль|registration (?:is )?(?:disabled|blocked)|registrations? (?:are )?not allowed|you have (?:exceeded|reached) the (?:maximum|max)|(?:your )?password (?:is )?too (?:short|long)|пароль слишком|регистрация (?:отключена|запрещена))/i.test(authNotice(message));
+}
+
+function authDiagnostic(message) {
+  const text = plainText(message);
+  if (/^<|»/.test(text)) return false;
+  return /^(?:\[(?:AuthMe|Login|Auth)\]\s*)?(?:please|you |you're |already |unknown command|this command|not registered|login|registration|password|success|вы |пожалуйста|неизвестная команда|сервер|server|limbo)/i.test(text)
+    && /login|log in|logged|auth|register|password|парол|авториз|команд|неизвест|unknown|server|сервер|limbo/i.test(text);
 }
 
 function permanentKick(reason) {
@@ -88,4 +101,4 @@ function redact(value, secrets = []) {
   return result.replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]');
 }
 
-module.exports = { readConfig, plainText, authAction, authSucceeded, authFailed, permanentKick, serverRetrySeconds, retryDelaySeconds, redact };
+module.exports = { readConfig, plainText, authAction, authSucceeded, authFailed, authDiagnostic, permanentKick, serverRetrySeconds, retryDelaySeconds, redact };

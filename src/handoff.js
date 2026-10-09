@@ -46,7 +46,7 @@ async function githubApi(method, endpoint, body) {
   const repository = process.env.GITHUB_REPOSITORY;
   const token = process.env.GH_TOKEN;
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || '') || !token) throw new Error('Missing GitHub workflow context');
-  if (!endpoint.startsWith('/actions/')) throw new Error('Only this repository Actions API is allowed');
+  if (!endpoint.startsWith('/actions/') && !/^\/statuses\/[0-9a-f]{40}$/i.test(endpoint)) throw new Error('Only this repository Actions/status API is allowed');
   const response = await fetch(`https://api.github.com/repos/${repository}${endpoint}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json', 'User-Agent': 'Sothey-Handoff' },

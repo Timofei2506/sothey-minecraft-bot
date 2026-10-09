@@ -1,0 +1,106 @@
+name: Resume luvhi until the original deadline
+run-name: luvhi · recovery until ${{ inputs.end_epoch }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      end_epoch:
+        description: 'Original absolute Unix deadline; do not extend the previous window'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luvhi-exvxeldo
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      first_end: ${{ steps.plan.outputs.first_end }}
+      has_second: ${{ steps.plan.outputs.has_second }}
+    steps:
+      - name: Validate and split the remaining window
+        id: plan
+        env:
+          END_EPOCH: ${{ inputs.end_epoch }}
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs');
+          const now = Math.floor(Date.now()/1000);
+          const end = Number(process.env.END_EPOCH);
+          if (!Number.isSafeInteger(end) || end-now < 120 || end-now > 28800) throw new Error('Deadline must be between 2 minutes and 8 hours from now');
+          const first = Math.min(end, now+14400);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `first_end=${first}\nhas_second=${end>first}\n`);
+          console.log(JSON.stringify({originalEnd:new Date(end*1000).toISOString(),firstEnd:new Date(first*1000).toISOString(),remainingSeconds:end-now}));
+          JS
+
+  first:
+    name: luvhi 1/2
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      actions: write
+      statuses: write
+    outputs:
+      can_continue: ${{ steps.report.outputs.can_continue }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - run: npm run check && npm test
+      - name: Connect luvhi
+        env:
+          MC_USERNAME: luvhi
+          MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
+          BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.first_end }}
+          BOT_IDLE_ACTIVITY_SECONDS: '45'
+          BOT_GITHUB_STATUS: 'true'
+          BRIDGE_ENABLED: ${{ needs.plan.outputs.has_second }}
+          SOURCE_JOB_NAME: 'luvhi 1/2'
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/session.js
+      - name: Publish result
+        id: report
+        if: always()
+        run: node scripts/publish-status.js
+
+  second:
+    name: luvhi 2/2
+    needs: [plan, first]
+    if: always() && !cancelled() && needs.plan.outputs.has_second == 'true' && needs.first.outputs.can_continue == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 250
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Connect luvhi
+        env:
+          MC_USERNAME: luvhi
+          MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
+          BOT_DEADLINE_EPOCH: ${{ inputs.end_epoch }}
+          BOT_IDLE_ACTIVITY_SECONDS: '45'
+          BOT_GITHUB_STATUS: 'true'
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/session.js
+      - name: Publish result
+        if: always()
+        run: node scripts/publish-status.js

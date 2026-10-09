@@ -1,0 +1,37 @@
+name: Regression check — reconnect without an auth notice
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot1-exvxeldo
+  cancel-in-progress: false
+
+jobs:
+  reconnect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - run: npm run check && npm test
+      - name: Verify a real reconnect with the initial auth notice deliberately hidden
+        env:
+          MC_USERNAME: bot1
+          MC_PASSWORD: ${{ secrets.BOT1_PASSWORD }}
+          BOT_RUN_SECONDS: '240'
+          BOT_MIN_READY_SECONDS: '60'
+          BOT_IDLE_ACTIVITY_SECONDS: '45'
+          BOT_AUTH_DIAGNOSTICS: 'true'
+        run: node scripts/reconnect-check.js
+      - name: Status report
+        if: always()
+        run: node scripts/publish-status.js

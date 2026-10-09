@@ -27,6 +27,8 @@ jobs:
     permissions:
       contents: read
       actions: write
+    outputs:
+      can_continue: ${{ steps.report.outputs.can_continue }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -44,12 +46,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/session.js
       - name: Status report
+        id: report
         if: always()
-        run: if [ -f reports/status.json ]; then cat reports/status.json; fi
+        run: node scripts/publish-status.js
 
   sothey_second:
     name: Sothey 2/2
     needs: sothey_first
+    if: always() && !cancelled() && needs.sothey_first.outputs.can_continue == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 250
     permissions:

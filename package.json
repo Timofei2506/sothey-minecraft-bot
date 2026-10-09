@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/main.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/helpers.js && node --check src/handoff.js && node --check scripts/session.js && node --check scripts/wait-handoff.js"
+    "check": "node --check src/main.js && node --check src/helpers.js && node --check src/handoff.js && node --check scripts/session.js && node --check scripts/wait-handoff.js && node --check scripts/publish-status.js && node --check scripts/reconnect-check.js"
   },
   "dependencies": {
     "mineflayer": "4.39.0"
