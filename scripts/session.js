@@ -10,6 +10,8 @@ const WANDER_EVENTS = new Set([
   'WANDER_LEG_START', 'WANDER_LEG_END', 'WANDER_STOPPED'
 ]);
 
+function round1(value) { return Math.round(value * 10) / 10; }
+
 function wanderEvent(name) {
   return WANDER_EVENTS.has(name);
 }
@@ -33,6 +35,7 @@ async function main() {
   let finished = false;
   let scheduled = !enabled;
   let dispatchTask = null;
+  const wanderStats = { legs: 0, jumps: 0, movedBlocks: 0, stops: {} };
   let timer = null;
   if (enabled) {
     if (handoff && config.username !== 'Sothey') throw new Error('Only Sothey initiates the one-off luvhi handoff');
@@ -84,15 +87,21 @@ async function main() {
     timer = setTimeout(() => { dispatchTask = dispatch(); }, Math.max(0, plan.dispatchEpoch * 1000 - Date.now()));
   }
   let statusQueue = Promise.resolve();
+  let wandererRef = null;
   const beacon = process.env.BOT_GITHUB_STATUS === 'true';
   const code = await runBot(config, {
+    createWandererHook: null,
     onEvent: event => {
       if (!beacon) return;
       if (wanderEvent(event.event)) {
+        if (event.event === 'WANDER_LEG_END') { wanderStats.legs = event.legs; wanderStats.jumps = event.jumps; wanderStats.movedBlocks = round1(wanderStats.movedBlocks + event.moved); }
+        if (event.event === 'WANDER_STOPPED') wanderStats.stops[event.reason] = (wanderStats.stops[event.reason] || 0) + 1;
         const wanderContext = `minecraft/${config.username}-wander`;
-        const state = /DISABLED|STOPPED|UNSAFE/.test(event.event) ? 'failure' : /LEG_END|REANCHORED|RADIUS/.test(event.event) ? 'success' : 'pending';
+        const wandererStats = { legs: wanderStats.legs, jumps: wanderStats.jumps, movedBlocks: round1(wanderStats.movedBlocks), stops: wanderStats.stops };
+        const state = /DISABLED|STOPPED|UNSAFE/.test(event.event) ? 'failure' : 'success';
+        const summary = wandererStats ? ` | legs=${wandererStats.legs} jumps=${wandererStats.jumps} total=${wandererStats.movedBlocks}m stops=${JSON.stringify(wandererStats.stops)}` : '';
         statusQueue = statusQueue.then(() => githubApi('POST', `/statuses/${process.env.GITHUB_SHA}`, {
-          state, context: wanderContext, description: wanderDescription(event).slice(0, 140),
+          state, context: wanderContext, description: (wanderDescription(event) + summary).slice(0, 140),
           target_url: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
         })).catch(error => console.error(JSON.stringify({ event: 'STATUS_BEACON_ERROR', message: error.message })));
         return;

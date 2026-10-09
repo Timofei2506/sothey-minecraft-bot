@@ -1,11 +1,12 @@
 'use strict';
 
-// Short, bounded walking around an anchor point. Ordinary player movement packets
-// only: no teleports, no flying, no speed changes, no chat, no interaction.
+// Continuous, bounded walking around an anchor point, with an occasional jump.
+// Ordinary player movement packets only: no teleports, no flying, no speed
+// changes, no chat, no interaction.
 //
 // The owner built a safe platform around the bot, so this deliberately does NOT
-// sample terrain: the only rule is the radius. The block the bot appeared on
-// decides it — gold ore means the tight survival spawn platform, anything else
+// sample terrain. The only rule is the radius, decided by the block the bot
+// appeared on: gold ore means the tight survival spawn platform, anything else
 // the normal area.
 
 const GOLD_ORE_RADIUS = 2;
@@ -25,17 +26,24 @@ function blockUnder(bot, x, y, z) {
   return bot.blockAt(Math.floor(x), Math.floor(y) - 1, Math.floor(z));
 }
 
-// Decided once, from the block the bot appeared on.
 function radiusFor(bot, position) {
   const block = blockUnder(bot, position.x, position.y, position.z);
   const goldOre = isGoldOre(block);
   return { radius: goldOre ? GOLD_ORE_RADIUS : DEFAULT_RADIUS, goldOre, block: block ? block.name : null };
 }
 
-function pickTarget(anchor, radius, random = Math.random) {
-  const angle = random() * Math.PI * 2;
-  const distance = radius * (0.35 + random() * 0.65);
-  return { x: anchor.x + Math.cos(angle) * distance, z: anchor.z + Math.sin(angle) * distance };
+// A target that is too close makes the leg finish instantly, so the bot would
+// stand still. Resample a few times for a target at least minStep away.
+function pickTarget(anchor, radius, from = null, random = Math.random, minStep = 1.5) {
+  let fallback = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const angle = random() * Math.PI * 2;
+    const distance = radius * (0.35 + random() * 0.65);
+    const target = { x: anchor.x + Math.cos(angle) * distance, z: anchor.z + Math.sin(angle) * distance };
+    if (!from || distance2D(from, target) >= minStep) return target;
+    fallback = target;
+  }
+  return fallback;
 }
 
 // Minecraft yaw: 0 faces +Z (south), -pi/2 faces +X (east).
@@ -45,20 +53,31 @@ function yawTowards(from, to) {
 
 function createWanderer({
   getBot, anchor: initialAnchor = null, random = Math.random, log = () => {},
-  maxLegMs = 4000, teleportReanchorBlocks = 8, now = () => Date.now()
+  pauseMs = 1000, maxLegMs = 4000, jumpEveryLegs = 3, jumpDelayMs = 800, jumpHoldMs = 300,
+  teleportReanchorBlocks = 8, now = () => Date.now()
 }) {
   let anchor = initialAnchor;
   let radius = null;
   let disabled = false;
   let leg = null;
   let lastPosition = null;
+  let pauseUntil = 0;
+  let legIndex = 0;
+  const stats = { legs: 0, jumps: 0, movedBlocks: 0, reanchors: 0, stops: {} };
 
   function release() {
     const bot = getBot();
     if (bot && leg) {
-      try { bot.setControlState('forward', false); } catch { /* connection gone */ }
+      try {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', false);
+      } catch { /* connection gone */ }
     }
     leg = null;
+  }
+
+  function note(reason) {
+    stats.stops[reason] = (stats.stops[reason] || 0) + 1;
   }
 
   function setAnchorFrom(position, reason) {
@@ -75,15 +94,21 @@ function createWanderer({
     if (!bot || !bot.entity || !bot.entity.position || disabled) return;
     const position = bot.entity.position;
     if (!anchor) setAnchorFrom(position, 'spawn');
-    if (leg) return;
+    if (leg || now() < pauseUntil) return;
     if (!bot.entity.onGround) return;
-    const target = pickTarget(anchor, radius, random);
-    leg = { target, endsAt: now() + maxLegMs, start: { x: position.x, z: position.z } };
+    const target = pickTarget(anchor, radius, position, random);
+    legIndex++;
+    leg = {
+      target, index: legIndex, endsAt: now() + maxLegMs, start: { x: position.x, z: position.z },
+      jumpState: jumpEveryLegs > 0 && legIndex % jumpEveryLegs === 0 ? 'pending' : 'none',
+      jumpAt: now() + jumpDelayMs, jumpUntil: 0
+    };
+    stats.legs++;
     try {
       const looking = bot.look(yawTowards(position, target), 0, true);
       if (looking && typeof looking.catch === 'function') looking.catch(() => {/* best effort */});
       bot.setControlState('forward', true);
-      log('WANDER_LEG_START', { target: { x: round(target.x), z: round(target.z) }, radius, maxSeconds: maxLegMs / 1000 });
+      log('WANDER_LEG_START', { leg: legIndex, target: { x: round(target.x), z: round(target.z) }, radius, jump: leg.jumpState === 'pending' });
     } catch (error) {
       release();
       log('WANDER_ERROR', { message: error.message });
@@ -100,21 +125,39 @@ function createWanderer({
       if (jump > teleportReanchorBlocks) {
         release();
         setAnchorFrom(position, 'teleport');
+        stats.reanchors++;
         log('WANDER_REANCHORED', { jump: round(jump) });
       }
     }
     lastPosition = { x: position.x, y: position.y, z: position.z };
     if (!leg) return;
-    // Stay inside the agreed radius; stop early if something pushed the bot out.
+
+    if (leg.jumpState === 'pending' && now() >= leg.jumpAt) {
+      try { bot.setControlState('jump', true); } catch { /* ignore */ }
+      leg.jumpState = 'active';
+      leg.jumpUntil = now() + jumpHoldMs;
+      stats.jumps++;
+      log('WANDER_JUMP', { leg: leg.index });
+    } else if (leg.jumpState === 'active' && now() >= leg.jumpUntil) {
+      try { bot.setControlState('jump', false); } catch { /* ignore */ }
+      leg.jumpState = 'done';
+    }
+
     if (distance2D(position, anchor) > radius + 1.5) {
+      const distance = round(distance2D(position, anchor));
       release();
-      log('WANDER_STOPPED', { reason: 'out_of_range', distance: round(distance2D(position, anchor)), radius });
+      note('out_of_range');
+      log('WANDER_STOPPED', { reason: 'out_of_range', distance, radius, legs: stats.legs });
+      if (distance > teleportReanchorBlocks) setAnchorFrom(position, 'moved');
       return;
     }
+
     if (distance2D(position, leg.target) < 0.7 || now() >= leg.endsAt) {
       const moved = round(distance2D(leg.start, position));
       release();
-      log('WANDER_LEG_END', { moved });
+      stats.movedBlocks = round(stats.movedBlocks + moved);
+      pauseUntil = now() + pauseMs;
+      log('WANDER_LEG_END', { leg: legIndex, moved, legs: stats.legs, jumps: stats.jumps });
     }
   }
 
@@ -123,6 +166,7 @@ function createWanderer({
     anchor = initialAnchor;
     radius = null;
     lastPosition = null;
+    pauseUntil = 0;
   }
 
   return {
@@ -131,6 +175,7 @@ function createWanderer({
     disable: reason => { release(); disabled = true; log('WANDER_DISABLED', { reason }); },
     getAnchor: () => (anchor ? { ...anchor } : null),
     getRadius: () => radius,
+    getStats: () => ({ ...stats, stops: { ...stats.stops } }),
     isDisabled: () => disabled,
     isMoving: () => !!leg
   };

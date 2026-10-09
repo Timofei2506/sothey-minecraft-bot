@@ -39,7 +39,11 @@ function runBot(config, deps = {}) {
     let finalCode = null;
     const timers = new Set();
     const wanderer = config.wanderRadiusBlocks > 0
-      ? createWanderer({ getBot: () => bot, radius: config.wanderRadiusBlocks, anchor: config.wanderAnchor, log })
+      ? createWanderer({
+        getBot: () => bot, anchor: config.wanderAnchor, log,
+        pauseMs: config.wanderPauseSeconds * 1000,
+        jumpEveryLegs: config.wanderJumpEveryLegs
+      })
       : null;
     const reportDir = deps.reportDir || path.join(process.cwd(), 'reports');
     fs.mkdirSync(reportDir, { recursive: true });
@@ -322,7 +326,7 @@ function runBot(config, deps = {}) {
       timers.add(setInterval(() => {
         if (stopping || !ready || !authenticated || !bot || bot.health <= 0) return;
         wanderer.tick();
-      }, config.wanderIntervalSeconds * 1000));
+      }, Math.max(250, config.wanderPauseSeconds * 1000)));
       timers.add(setInterval(() => {
         if (stopping || !ready || !authenticated || !bot || bot.health <= 0) { wanderer.stop(); return; }
         wanderer.monitor();

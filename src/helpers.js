@@ -47,7 +47,8 @@ function readConfig(env = process.env) {
     maxOfflineSeconds: integer(env, 'BOT_MAX_OFFLINE_SECONDS', 900, 60, 3600),
     // 0 disables walking entirely; the arm animation still prevents the idle kick.
     wanderRadiusBlocks: integer(env, 'WANDER_RADIUS_BLOCKS', 0, 0, 16),
-    wanderIntervalSeconds: integer(env, 'WANDER_INTERVAL_SECONDS', 90, 30, 900),
+    wanderPauseSeconds: integer(env, 'WANDER_PAUSE_SECONDS', 1, 0, 60),
+    wanderJumpEveryLegs: integer(env, 'WANDER_JUMP_EVERY_LEGS', 3, 0, 20),
     wanderAnchor: parseAnchor(env.WANDER_ANCHOR)
   };
 }
