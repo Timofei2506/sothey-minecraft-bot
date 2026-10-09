@@ -103,3 +103,30 @@ test('being healthy earlier does not produce PASS when the deadline ends offline
   assert.equal(report.readyAtEnd, false);
   assert.ok(report.readySeconds > 0);
 });
+
+test('live-test auth gate does not depend on asynchronously injected chat methods', () => {
+  const { suppressAuthUntilProbe } = require('../scripts/reconnect-check');
+  const client = new EventEmitter();
+  const gate = { probed: false };
+  let notices = 0;
+  client.on('messagestr', () => notices++);
+  suppressAuthUntilProbe(client, gate, () => {});
+  assert.equal(client.chat, undefined);
+  client.emit('messagestr', 'Successful login!');
+  assert.equal(notices, 0);
+  gate.probed = true;
+  client.emit('messagestr', 'You are already logged in!');
+  assert.equal(notices, 1);
+});
+
+test('live-test gate stays effective when attempt 2 is rejected before login', () => {
+  const { suppressAuthUntilProbe } = require('../scripts/reconnect-check');
+  const rejected = new EventEmitter();
+  suppressAuthUntilProbe(rejected, { probed: false }, () => {});
+  rejected.emit('kicked', 'You must wait 3 seconds before logging-in again.');
+  const next = new EventEmitter(); const gate = { probed: false }; let notices = 0;
+  next.on('messagestr', () => notices++);
+  suppressAuthUntilProbe(next, gate, () => {});
+  next.emit('messagestr', 'Successful login!'); assert.equal(notices, 0);
+  gate.probed = true; next.emit('messagestr', "You're already logged in!"); assert.equal(notices, 1);
+});

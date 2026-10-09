@@ -27,7 +27,7 @@ jobs:
         env:
           MC_USERNAME: bot1
           MC_PASSWORD: ${{ secrets.BOT1_PASSWORD }}
-          BOT_RUN_SECONDS: '240'
+          BOT_RUN_SECONDS: '180'
           BOT_MIN_READY_SECONDS: '60'
           BOT_IDLE_ACTIVITY_SECONDS: '45'
           BOT_AUTH_DIAGNOSTICS: 'true'
