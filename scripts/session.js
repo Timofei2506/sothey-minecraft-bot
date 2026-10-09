@@ -6,10 +6,8 @@ const { handoffPlan, bridgePlan, targetRunTitle, bridgeRunTitle, githubApi } = r
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const WANDER_EVENTS = new Set([
-  'WANDER_ANCHOR', 'WANDER_RADIUS', 'WANDER_AREA_UNSAFE', 'WANDER_DISABLED_UNSAFE_AREA',
-  'WANDER_DISABLED_OUT_OF_RANGE', 'WANDER_DISABLED', 'WANDER_REANCHORED',
-  'WANDER_LEG_START', 'WANDER_LEG_END', 'WANDER_STOPPED',
-  'WANDER_SKIPPED_PLAYER_NEARBY', 'WANDER_SKIPPED_UNSAFE_TARGET'
+  'WANDER_ANCHOR', 'WANDER_RADIUS', 'WANDER_DISABLED', 'WANDER_REANCHORED',
+  'WANDER_LEG_START', 'WANDER_LEG_END', 'WANDER_STOPPED'
 ]);
 
 function wanderEvent(name) {
@@ -17,16 +15,11 @@ function wanderEvent(name) {
 }
 
 function wanderDescription(event) {
-  if (event.event === 'WANDER_RADIUS') return `wander radius ${event.effective} blocks (configured ${event.configured}, gold ore under spawn: ${event.goldOre})`;
+  if (event.event === 'WANDER_RADIUS') return `wander radius ${event.radius} blocks (block under spawn: ${event.block}, gold ore: ${event.goldOre})`;
   if (event.event === 'WANDER_ANCHOR') return `wander anchor x=${event.x} y=${event.y} z=${event.z}`;
-  if (event.event === 'WANDER_DISABLED_UNSAFE_AREA') return `walking off: unsafe ground near x=${event.point?.x} z=${event.point?.z} (radius ${event.configuredRadius})`;
-  if (event.event === 'WANDER_DISABLED_OUT_OF_RANGE') return `walking off: ${event.distance} blocks from anchor (radius ${event.radius})`;
-  if (event.event === 'WANDER_AREA_UNSAFE') return `area unsafe near x=${event.point?.x} z=${event.point?.z}`;
   if (event.event === 'WANDER_LEG_END') return `walked ${event.moved} blocks`;
-  if (event.event === 'WANDER_STOPPED') return `walk stopped: ${event.reason}`;
+  if (event.event === 'WANDER_STOPPED') return `walk stopped: ${event.reason} (radius ${event.radius})`;
   if (event.event === 'WANDER_REANCHORED') return `anchor moved by admin teleport (${event.jump} blocks)`;
-  if (event.event === 'WANDER_SKIPPED_PLAYER_NEARBY') return 'walk skipped: player within 2 blocks';
-  if (event.event === 'WANDER_SKIPPED_UNSAFE_TARGET') return `walk skipped: unsafe target x=${event.x} z=${event.z}`;
   if (event.event === 'WANDER_DISABLED') return `walking disabled: ${event.reason}`;
   return event.event;
 }
