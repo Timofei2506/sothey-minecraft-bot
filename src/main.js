@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const mineflayer = require('mineflayer');
+const { createWanderer } = require('./wander');
 const { readConfig, plainText, authAction, authSucceeded, authFailed, authDiagnostic, permanentKick, serverRetrySeconds, retryDelaySeconds, redact } = require('./helpers');
 
 // Dependencies are injectable so actual connection-state transitions can be tested
@@ -37,6 +38,9 @@ function runBot(config, deps = {}) {
     let finalReason = null;
     let finalCode = null;
     const timers = new Set();
+    const wanderer = config.wanderRadiusBlocks > 0
+      ? createWanderer({ getBot: () => bot, radius: config.wanderRadiusBlocks, anchor: config.wanderAnchor, log })
+      : null;
     const reportDir = deps.reportDir || path.join(process.cwd(), 'reports');
     fs.mkdirSync(reportDir, { recursive: true });
 
@@ -55,6 +59,8 @@ function runBot(config, deps = {}) {
         updatedAt: new Date().toISOString(), startedAt: new Date(started).toISOString(), plannedEndAt: new Date(deadline).toISOString(),
         host: config.host, port: config.port, username: config.username, version: config.version,
         status: stopping ? 'stopped' : ready ? 'ready' : recycling || !bot ? 'reconnecting' : spawned ? 'unverified_world' : 'joining',
+        wanderRadiusBlocks: config.wanderRadiusBlocks,
+        wanderAnchor: wanderer?.getAnchor() || null,
         authenticated, ready, readyAtEnd, dimension: bot?.game?.dimension || null,
         readySeconds: connectedSeconds(), elapsedSeconds: Math.floor((Date.now() - started) / 1000),
         ...stats, finalReason, exitCode: finalCode
@@ -159,6 +165,7 @@ function runBot(config, deps = {}) {
       if (stopping || recycling || !bot) return;
       const current = bot;
       recycling = true;
+      wanderer?.stop();
       endReadyPeriod();
       authenticated = false;
       clearConnectionTimers();
@@ -272,6 +279,8 @@ function runBot(config, deps = {}) {
       });
       current.on('death', () => {
         if (!stopping && bot === current) log('DEATH', { automaticRespawn: true });
+        // Walking is switched off after a death until an admin moves the bot again.
+        wanderer?.disable('death');
       });
       current.on('kicked', (reason) => {
         if (bot !== current || stopping) return;
@@ -309,6 +318,16 @@ function runBot(config, deps = {}) {
         log('OUTAGE_WARNING', { offlineSeconds: Math.floor((Date.now() - lastReadyAt) / 1000), continuingUntil: new Date(deadline).toISOString() });
       }
     }, 5000));
+    if (wanderer) {
+      timers.add(setInterval(() => {
+        if (stopping || !ready || !authenticated || !bot || bot.health <= 0) return;
+        wanderer.tick();
+      }, config.wanderIntervalSeconds * 1000));
+      timers.add(setInterval(() => {
+        if (stopping || !ready || !authenticated || !bot || bot.health <= 0) { wanderer.stop(); return; }
+        wanderer.monitor();
+      }, 250));
+    }
     if (config.idleActivitySeconds > 0) timers.add(setInterval(() => {
       if (stopping || !ready || !authenticated || !bot || bot.health <= 0) return;
       try {
@@ -318,7 +337,7 @@ function runBot(config, deps = {}) {
         log('IDLE_ACTIVITY', { action: 'arm_animation_and_slot_change', count: stats.activityCount });
       } catch (error) { log('IDLE_ACTIVITY_ERROR', { message: error.message }); }
     }, config.idleActivitySeconds * 1000));
-    log('START', { seconds: config.runSeconds, plannedEndAt: new Date(deadline).toISOString(), idleActivitySeconds: config.idleActivitySeconds, minReadySeconds: config.minReadySeconds, auth: 'offline + server password' });
+    log('START', { seconds: config.runSeconds, plannedEndAt: new Date(deadline).toISOString(), idleActivitySeconds: config.idleActivitySeconds, wanderRadiusBlocks: config.wanderRadiusBlocks, minReadySeconds: config.minReadySeconds, auth: 'offline + server password' });
     writeReport();
     connect();
   });

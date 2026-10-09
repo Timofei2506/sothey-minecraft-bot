@@ -65,6 +65,7 @@ jobs:
           MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
           BOT_DEADLINE_EPOCH: ${{ needs.plan.outputs.first_end }}
           BOT_IDLE_ACTIVITY_SECONDS: '45'
+          WANDER_RADIUS_BLOCKS: '5'
           BOT_GITHUB_STATUS: 'true'
           BRIDGE_ENABLED: ${{ needs.plan.outputs.has_second }}
           SOURCE_JOB_NAME: 'luvhi 1/2'
@@ -98,6 +99,7 @@ jobs:
           MC_PASSWORD: ${{ secrets.LUVHI_PASSWORD }}
           BOT_DEADLINE_EPOCH: ${{ inputs.end_epoch }}
           BOT_IDLE_ACTIVITY_SECONDS: '45'
+          WANDER_RADIUS_BLOCKS: '5'
           BOT_GITHUB_STATUS: 'true'
           GH_TOKEN: ${{ github.token }}
         run: node scripts/session.js

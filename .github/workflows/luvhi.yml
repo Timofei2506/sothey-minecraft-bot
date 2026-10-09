@@ -36,6 +36,7 @@ env:
   MC_PORT: '21734'
   MC_USERNAME: luvhi
   BOT_IDLE_ACTIVITY_SECONDS: '45'
+  WANDER_RADIUS_BLOCKS: '5'
 
 jobs:
   luvhi_first:

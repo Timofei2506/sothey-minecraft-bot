@@ -8,6 +8,15 @@ function integer(env, name, fallback, min, max) {
   return value;
 }
 
+function parseAnchor(value) {
+  if (value === undefined || String(value).trim() === '') return null;
+  const parts = String(value).split(',').map(part => Number(part.trim()));
+  if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) {
+    throw new Error('WANDER_ANCHOR must be three numbers: "x,y,z"');
+  }
+  return { x: parts[0], y: parts[1], z: parts[2] };
+}
+
 function readConfig(env = process.env) {
   const username = env.MC_USERNAME || 'Sothey';
   if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) throw new Error('Invalid Minecraft username');
@@ -35,7 +44,11 @@ function readConfig(env = process.env) {
     expectNewAccount: env.BOT_EXPECT_NEW_ACCOUNT === 'true',
     minReadySeconds: integer(env, 'BOT_MIN_READY_SECONDS', 30, 1, runSeconds),
     joinTimeoutSeconds: integer(env, 'BOT_JOIN_TIMEOUT_SECONDS', 180, 30, 600),
-    maxOfflineSeconds: integer(env, 'BOT_MAX_OFFLINE_SECONDS', 900, 60, 3600)
+    maxOfflineSeconds: integer(env, 'BOT_MAX_OFFLINE_SECONDS', 900, 60, 3600),
+    // 0 disables walking entirely; the arm animation still prevents the idle kick.
+    wanderRadiusBlocks: integer(env, 'WANDER_RADIUS_BLOCKS', 0, 0, 16),
+    wanderIntervalSeconds: integer(env, 'WANDER_INTERVAL_SECONDS', 90, 30, 900),
+    wanderAnchor: parseAnchor(env.WANDER_ANCHOR)
   };
 }
 
@@ -101,4 +114,4 @@ function redact(value, secrets = []) {
   return result.replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]');
 }
 
-module.exports = { readConfig, plainText, authAction, authSucceeded, authFailed, authDiagnostic, permanentKick, serverRetrySeconds, retryDelaySeconds, redact };
+module.exports = { readConfig, parseAnchor, plainText, authAction, authSucceeded, authFailed, authDiagnostic, permanentKick, serverRetrySeconds, retryDelaySeconds, redact };
