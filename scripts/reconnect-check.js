@@ -7,6 +7,7 @@ const { readConfig, authAction, authSucceeded, redact } = require('../src/helper
 async function main() {
   const config = readConfig();
   let connections = 0;
+  let permitSecondAuthNotice = false;
   let current;
   let triggered = false;
   let forced = false;
@@ -18,15 +19,9 @@ async function main() {
       connections++;
       if (connections === 2) {
         // Test the exact missing-auth-notice scenario without changing the server.
-        let probeSent = false;
-        const originalChat = client.chat.bind(client);
         const originalEmit = client.emit.bind(client);
-        client.chat = message => {
-          if (message.startsWith('/login ')) probeSent = true;
-          return originalChat(message);
-        };
         client.emit = (event, ...args) => {
-          if (event === 'messagestr' && !probeSent && (authAction(args[0]) || authSucceeded(args[0]))) {
+          if (event === 'messagestr' && !permitSecondAuthNotice && (authAction(args[0]) || authSucceeded(args[0]))) {
             console.log('TEST_SUPPRESSED_INITIAL_AUTH_NOTICE');
             return false;
           }
@@ -36,6 +31,9 @@ async function main() {
       return client;
     },
     onEvent: event => {
+      // Mineflayer injects chat asynchronously. Observe the core's auth event
+      // instead of binding a chat method before plugins have initialized.
+      if (connections === 2 && event.event === 'AUTH_COMMAND' && event.command === '/login') permitSecondAuthNotice = true;
       if (event.event === 'READY' && !triggered) {
         triggered = true;
         timer = setTimeout(() => {
